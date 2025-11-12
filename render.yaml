@@ -1,0 +1,50 @@
+services:
+  - type: web
+    name: frontend
+    env: docker
+    plan: free
+    region: oregon
+    dockerfilePath: frontend/Dockerfile
+    dockerContext: frontend
+    healthCheckPath: /
+    envVars:
+      - key: BACKEND_URL
+        fromService:
+          type: web
+          name: backend-ml
+          property: url
+      - key: LIGHTCURVE_API_URL
+        fromService:
+          type: web
+          name: lightcurve-api
+          property: url
+      - key: NEXT_PUBLIC_APP_ENV
+        value: production
+  - type: web
+    name: backend-ml
+    env: docker
+    plan: free
+    region: oregon
+    dockerfilePath: backend_ml/Dockerfile
+    dockerContext: backend_ml
+    healthCheckPath: /health
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: BACKEND_ALLOWED_ORIGINS
+        value: "*"
+  - type: web
+    name: lightcurve-api
+    env: docker
+    plan: free
+    region: oregon
+    dockerfilePath: lightcurve/Dockerfile
+    dockerContext: lightcurve
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: PYTHONUNBUFFERED
+        value: "1"
+      - key: LIGHTCURVE_ALLOWED_ORIGINS
+        value: "*"
+      - key: MODEL_PATH
+        value: models/koi_rf_model.onnx

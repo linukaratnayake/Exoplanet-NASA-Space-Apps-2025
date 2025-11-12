@@ -1,3 +1,5 @@
+import os
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -8,17 +10,26 @@ import numpy as np
 
 app = FastAPI(title="Exoplanet ONNX Inference API")
 
-from fastapi.middleware.cors import CORSMiddleware
+default_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
 
-# CORS for frontend
+_raw_origins = os.getenv("BACKEND_ALLOWED_ORIGINS")
+if _raw_origins:
+    parsed_origins = [origin.strip() for origin in _raw_origins.split(",") if origin.strip()]
+else:
+    parsed_origins = default_origins
+
+credentials_allowed = True
+if parsed_origins == ["*"]:
+    credentials_allowed = False
+
+# CORS for frontend (configurable via env var BACKEND_ALLOWED_ORIGINS)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://frontend:3000",
-        "http://127.0.0.1:3000"
-    ],
-    allow_credentials=True,
+    allow_origins=parsed_origins,
+    allow_credentials=credentials_allowed,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -115,6 +126,12 @@ async def kepler_accuracy():
     if acc is None:
         raise HTTPException(status_code=404, detail="Accuracy not found in model metadata")
     return {"accuracy": acc}
+
+
+@app.get("/health")
+async def health_check():
+    """Lightweight readiness endpoint for Render health checks."""
+    return {"status": "ok"}
 
 if __name__ == "__main__":
     import uvicorn

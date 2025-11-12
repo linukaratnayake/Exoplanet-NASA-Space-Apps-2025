@@ -27,11 +27,12 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 # Expose port
+ENV PORT=9000
 EXPOSE 9000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:9000/api/v1/health || exit 1
 
-# Run the application
-CMD ["python", "api.py"]
+# Run the application via uvicorn to honour the PORT env var
+CMD ["sh", "-c", "uvicorn api:app --host 0.0.0.0 --port ${PORT:-9000}"]

@@ -2,59 +2,18 @@ import io
 import os
 import tempfile
 import uuid
-from pathlib import Path
-from typing import Dict, List, Tuple
-import numpy as np
-import pandas as pd
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-import uvicorn
-import logging
-
-# Import your existing modules
-from lightcurve_build_pipeline import run_pipeline
-from config import PipelineConfig, FastPipelineConfig
-from fast_transit import fit_trapezoid_from_lightcurve, lc_to_arrays
-from inference import load_model, run_inference
-from plotting import plot_results
-
-# Configure logging
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
-
-# Initialize FastAPI app
-app = FastAPI(
-    title="Lightcurve Analysis API",
-    description="API for processing lightcurve FITS files through the complete analysis pipeline",
-    version="1.0.0"
-)
-
-# Enable CORS for frontend access
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # Configure this properly for production
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-import io
-import os
-import tempfile
-import uuid
-from pathlib import Path
-from typing import Dict, List, Tuple
 from contextlib import asynccontextmanager
+from pathlib import Path
+from typing import Dict, List, Tuple
+
+import logging
 import numpy as np
 import pandas as pd
-from fastapi import FastAPI, File, HTTPException, UploadFile
-from fastapi.responses import FileResponse, JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
-import logging
+from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 
-# Import your existing modules
 from lightcurve_build_pipeline import run_pipeline
 from config import PipelineConfig, FastPipelineConfig
 from fast_transit import fit_trapezoid_from_lightcurve, lc_to_arrays
@@ -76,7 +35,7 @@ async def lifespan(app: FastAPI):
     # Startup
     global model_session
     try:
-        model_path = "models/koi_rf_model.onnx"
+        model_path = os.getenv("MODEL_PATH", "models/koi_rf_model.onnx")
         if Path(model_path).exists():
             model_session = load_model(model_path)
             logger.info(f"Successfully loaded model from {model_path}")
@@ -96,6 +55,30 @@ app = FastAPI(
     description="API for processing lightcurve FITS files through the complete analysis pipeline",
     version="1.0.0",
     lifespan=lifespan
+)
+
+default_origins = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]
+
+_allowed_origins_raw = os.getenv("LIGHTCURVE_ALLOWED_ORIGINS")
+if _allowed_origins_raw:
+    allowed_origins = [origin.strip() for origin in _allowed_origins_raw.split(",") if origin.strip()]
+else:
+    allowed_origins = default_origins
+
+allow_credentials = True
+if allowed_origins == ["*"]:
+    allow_credentials = False
+
+# Enable CORS for frontend access (configurable via env var LIGHTCURVE_ALLOWED_ORIGINS)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=allow_credentials,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 class LightcurveProcessingResponse:

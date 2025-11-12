@@ -15,9 +15,9 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY main.py .
 COPY models/ ./models/
 
-# Expose port 8000 for internal network communication
-# Note: Backend is NOT published to host - only accessible via Docker network
+# Expose port (Render provides PORT env var at runtime)
+ENV PORT=8000
 EXPOSE 8000
 
-# Start FastAPI server
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Start FastAPI server (allow overriding port via PORT env var)
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
