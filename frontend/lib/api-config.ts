@@ -1,25 +1,42 @@
-// Utility function to get the backend API URL
-// For client-side requests, we'll proxy through Next.js API routes
-// For server-side requests, we'll use the BACKEND_URL environment variable
+// Utility helpers to resolve backend URLs across environments.
+
+const normalizeUrl = (url: string) => {
+  if (!url) {
+    return url;
+  }
+  return /^https?:\/\//i.test(url) ? url : `https://${url}`;
+};
+
+export const ensureAbsoluteUrl = (
+  value: string | undefined,
+  fallback?: string
+) => {
+  const raw = value && value.trim().length > 0 ? value.trim() : fallback ?? "";
+  if (!raw) {
+    return "";
+  }
+  return normalizeUrl(raw);
+};
+
+export const getEnvVar = (key: string) => {
+  const env = (globalThis as any)?.process?.env;
+  return env?.[key] as string | undefined;
+};
 
 export const getBackendUrl = () => {
-  // Server-side: use environment variable
-  if (typeof window === 'undefined') {
-    return process.env.BACKEND_URL || 'http://localhost:8000';
+  if (typeof window === "undefined") {
+    return ensureAbsoluteUrl(getEnvVar("BACKEND_URL"), "http://localhost:8000");
   }
-  
+
   // Client-side: use Next.js API routes as proxy
-  return '';
+  return "";
 };
 
 export const getApiUrl = (endpoint: string) => {
-  const backendUrl = getBackendUrl();
-  
-  // Server-side: direct backend call
-  if (typeof window === 'undefined') {
+  if (typeof window === "undefined") {
+    const backendUrl = getBackendUrl();
     return `${backendUrl}${endpoint}`;
   }
-  
-  // Client-side: use Next.js API routes
+
   return `/api/proxy${endpoint}`;
 };

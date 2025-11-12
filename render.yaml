@@ -12,12 +12,12 @@ services:
         fromService:
           type: web
           name: backend-ml
-          property: url
+          property: host
       - key: LIGHTCURVE_API_URL
         fromService:
           type: web
           name: lightcurve-api
-          property: url
+          property: host
       - key: NEXT_PUBLIC_APP_ENV
         value: production
   - type: web

@@ -1,6 +1,10 @@
-import { NextRequest, NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from "next/server";
+import { ensureAbsoluteUrl, getEnvVar } from "@/lib/api-config";
 
-const LIGHTCURVE_API_URL = process.env.LIGHTCURVE_API_URL || 'http://localhost:9000';
+const LIGHTCURVE_API_URL = ensureAbsoluteUrl(
+  getEnvVar("LIGHTCURVE_API_URL"),
+  "http://localhost:9000"
+);
 
 export async function GET(
   request: NextRequest,
@@ -8,15 +12,14 @@ export async function GET(
 ) {
   try {
     const taskId = params.taskId;
-    
-    const response = await fetch(`${LIGHTCURVE_API_URL}/api/v1/folded-image/${taskId}`);
+
+    const response = await fetch(
+      `${LIGHTCURVE_API_URL}/api/v1/folded-image/${taskId}`
+    );
 
     if (!response.ok) {
       if (response.status === 404) {
-        return NextResponse.json(
-          { error: 'Image not found' },
-          { status: 404 }
-        );
+        return NextResponse.json({ error: "Image not found" }, { status: 404 });
       }
       const errorText = await response.text();
       return NextResponse.json(
@@ -27,18 +30,17 @@ export async function GET(
 
     // Get the image blob and forward it
     const imageBuffer = await response.arrayBuffer();
-    
+
     return new NextResponse(imageBuffer, {
       headers: {
-        'Content-Type': 'image/png',
-        'Content-Disposition': `attachment; filename="folded_lightcurve_${taskId}.png"`,
+        "Content-Type": "image/png",
+        "Content-Disposition": `attachment; filename="folded_lightcurve_${taskId}.png"`,
       },
     });
-
   } catch (error) {
-    console.error('Error fetching folded image:', error);
+    console.error("Error fetching folded image:", error);
     return NextResponse.json(
-      { error: 'Failed to fetch folded image' },
+      { error: "Failed to fetch folded image" },
       { status: 500 }
     );
   }
