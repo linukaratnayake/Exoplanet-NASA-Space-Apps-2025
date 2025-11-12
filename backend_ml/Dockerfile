@@ -20,4 +20,4 @@ ENV PORT=8000
 EXPOSE 8000
 
 # Start FastAPI server (allow overriding port via PORT env var)
-CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000}"]
+CMD ["sh", "-c", "uvicorn main:app --host 0.0.0.0 --port ${PORT:-8000} --workers 1 --limit-max-requests 10 --limit-concurrency 1"]

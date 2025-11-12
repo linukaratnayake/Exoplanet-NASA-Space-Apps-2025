@@ -1,24 +1,18 @@
-import io
 import os
-import tempfile
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Dict, List, Tuple
 
 import logging
 import numpy as np
-import pandas as pd
 import uvicorn
 from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 
 from lightcurve_build_pipeline import run_pipeline
-from config import PipelineConfig, FastPipelineConfig
-from fast_transit import fit_trapezoid_from_lightcurve, lc_to_arrays
+from config import FastPipelineConfig
 from inference import load_model, run_inference
-from plotting import plot_results
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -81,48 +75,39 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-class LightcurveProcessingResponse:
-    """Response model for lightcurve processing"""
-    def __init__(self, task_id: str, status: str, message: str = ""):
-        self.task_id = task_id
-        self.status = status
-        self.message = message
-
-class TransitParameters:
-    """Response model for transit parameters"""
-    def __init__(self, t0: float, depth: float, duration: float, baseline: float):
-        self.t0 = t0
-        self.depth = depth
-        self.duration = duration
-        self.baseline = baseline
-
-class InferenceResult:
-    """Response model for ML inference results"""
-    def __init__(self, prediction: Dict, confidence: float = None):
-        self.prediction = prediction
-        self.confidence = confidence
-
 def save_lightcurve_as_csv(lightcurve, file_path: Path) -> Path:
     """Save a lightcurve object as CSV file"""
     try:
-        # Convert lightcurve to pandas DataFrame
-        df = lightcurve.to_pandas().reset_index().rename(columns={"index": "time"})
-        
-        # Handle time conversion if needed
-        def _to_float(t):
-            if hasattr(t, "to_value"):
-                return t.to_value()
-            if hasattr(t, "value"):
-                return t.value
-            return float(t)
-        
-        df["time"] = df["time"].apply(_to_float)
-        df = df.dropna(subset=["time", "flux"])
-        
-        # Save as CSV
-        df.to_csv(file_path, index=False)
+        # Extract time/flux arrays without relying on pandas to reduce memory footprint
+        time_attr = getattr(lightcurve, "time", None)
+        flux_attr = getattr(lightcurve, "flux", None)
+
+        if time_attr is None or flux_attr is None:
+            raise ValueError("Lightcurve object missing time or flux data")
+
+        if hasattr(time_attr, "to_value"):
+            time_array = np.asarray(time_attr.to_value(), dtype=np.float64)
+        elif hasattr(time_attr, "value"):
+            time_array = np.asarray(time_attr.value, dtype=np.float64)
+        else:
+            time_array = np.asarray(time_attr, dtype=np.float64)
+
+        if hasattr(flux_attr, "value"):
+            flux_array = np.asarray(flux_attr.value, dtype=np.float64)
+        else:
+            flux_array = np.asarray(flux_attr, dtype=np.float64)
+
+        mask = np.isfinite(time_array) & np.isfinite(flux_array)
+        filtered_time = time_array[mask]
+        filtered_flux = flux_array[mask]
+
+        if filtered_time.size == 0 or filtered_flux.size == 0:
+            raise ValueError("Lightcurve contains no finite values for time/flux")
+
+        stacked = np.column_stack((filtered_time, filtered_flux))
+        np.savetxt(file_path, stacked, delimiter=",", header="time,flux", comments="")
         return file_path
-        
+
     except Exception as e:
         logger.error(f"Error saving lightcurve as CSV: {e}")
         raise
@@ -142,11 +127,16 @@ async def upload_fits_file(file: UploadFile = File(...)):
     task_dir.mkdir(exist_ok=True)
     
     try:
-        # Save uploaded file
+        # Save uploaded file without loading entire payload into memory
         fits_path = task_dir / file.filename
+        chunk_size = 1024 * 1024  # 1 MB chunks to keep memory usage low
         with open(fits_path, "wb") as buffer:
-            content = await file.read()
-            buffer.write(content)
+            while True:
+                chunk = await file.read(chunk_size)
+                if not chunk:
+                    break
+                buffer.write(chunk)
+        await file.close()
         
         logger.info(f"Saved FITS file for task {task_id}: {fits_path}")
         
@@ -155,27 +145,14 @@ async def upload_fits_file(file: UploadFile = File(...)):
         logger.info("Using FastPipelineConfig for optimized web performance")
         result = run_pipeline(local_paths=str(fits_path), cfg=cfg)
         
-        # Generate plots
+        # Generate plots (lazy import keeps heavy deps out of cold start path)
         plot_dir = task_dir / "plots"
+        from plotting import plot_results  # Lazy import keeps dependency optional
         plot_results(result, outdir=plot_dir)
         
         # Save lightcurve data for later use
         lc_csv_path = task_dir / "lightcurve.csv"
         save_lightcurve_as_csv(result.folded_lc, lc_csv_path)
-        
-        # Store pipeline result for later access (you might want to use a proper database in production)
-        result_data = {
-            "task_id": task_id,
-            "status": "completed",
-            "folded_image_path": str(plot_dir / "03_folded.png"),
-            "lightcurve_csv_path": str(lc_csv_path),
-            "best_period": result.best_period,
-            "pipeline_result": result  # Store the actual result object
-        }
-        
-        # In production, store this in a database or cache
-        # For now, we'll store it in a simple way (you may want to improve this)
-        result_file = task_dir / "result.json"
         
         return JSONResponse({
             "task_id": task_id,
@@ -216,10 +193,20 @@ async def get_transit_parameters(task_id: str):
         raise HTTPException(status_code=404, detail="Lightcurve data not found for this task ID")
     
     try:
-        # Read the lightcurve CSV
-        df = pd.read_csv(lc_csv_path)
-        time = np.array(df["time"], dtype=float)
-        flux = np.array(df["flux"], dtype=float)
+        # Read the lightcurve CSV with NumPy to avoid pandas overhead
+        data = np.genfromtxt(lc_csv_path, delimiter=",", names=True, dtype=np.float64)
+        if data.size == 0:
+            raise ValueError("Lightcurve CSV is empty")
+
+        time = np.atleast_1d(data["time"])
+        flux = np.atleast_1d(data["flux"])
+
+        finite_mask = np.isfinite(time) & np.isfinite(flux)
+        if not np.any(finite_mask):
+            raise ValueError("No finite values found in lightcurve data")
+
+        time = time[finite_mask]
+        flux = flux[finite_mask]
         
         # Fit trapezoid model
         from fast_transit import fit_trapezoid_from_arrays

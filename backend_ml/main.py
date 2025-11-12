@@ -34,20 +34,14 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Load all three models
+# Load ONNX models
 tess_model_path = "models/TESS_Model_v2.onnx"
-k2_model_path = "models/k2_model.onnx"
 kepler_model_path = "models/KOI_Model_v2.onnx"
 
 try:
     tess_session = ort.InferenceSession(tess_model_path)
 except Exception as e:
     raise RuntimeError(f"Failed to load TESS model: {e}")
-
-try:
-    k2_session = ort.InferenceSession(k2_model_path)
-except Exception as e:
-    raise RuntimeError(f"Failed to load K2 model: {e}")
 
 try:
     kepler_session = ort.InferenceSession(kepler_model_path)
@@ -91,13 +85,6 @@ async def tess_inference(request: InferenceRequest):
         raise HTTPException(status_code=400, detail=result["error"])
     return result
 
-@app.post("/inference/k2")
-async def k2_inference(request: InferenceRequest):
-    result = run_inference(k2_session, request.inputs)
-    if result["status"] == "error":
-        raise HTTPException(status_code=400, detail=result["error"])
-    return result
-
 @app.post("/inference/kepler")
 async def kepler_inference(request: InferenceRequest):
     result = run_inference(kepler_session, request.inputs)
@@ -109,13 +96,6 @@ async def kepler_inference(request: InferenceRequest):
 @app.get("/accuracy/tess")
 async def tess_accuracy():
     acc = get_model_accuracy(tess_model_path)
-    if acc is None:
-        raise HTTPException(status_code=404, detail="Accuracy not found in model metadata")
-    return {"accuracy": acc}
-
-@app.get("/accuracy/k2")
-async def k2_accuracy():
-    acc = get_model_accuracy(k2_model_path)
     if acc is None:
         raise HTTPException(status_code=404, detail="Accuracy not found in model metadata")
     return {"accuracy": acc}

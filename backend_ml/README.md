@@ -12,7 +12,6 @@ This directory contains the FastAPI backend server for exoplanet classification 
 - `models/` - Directory containing ONNX model files
   - `TESS_Model_v2.onnx` - TESS mission model
   - `KOI_Model_v2.onnx` - Kepler mission model
-  - `k2_model.onnx` - K2 mission model
 
 ## API Endpoints
 
@@ -20,13 +19,11 @@ This directory contains the FastAPI backend server for exoplanet classification 
 
 - `POST /inference/tess` - TESS model inference
 - `POST /inference/kepler` - Kepler model inference
-- `POST /inference/k2` - K2 model inference
 
 ### Accuracy Endpoints
 
 - `GET /accuracy/tess` - Get TESS model accuracy
 - `GET /accuracy/kepler` - Get Kepler model accuracy
-- `GET /accuracy/k2` - Get K2 model accuracy
 
 ## Running Locally
 

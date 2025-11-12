@@ -1,37 +1,33 @@
 import sys
 from pathlib import Path
-import numpy as np
-import pandas as pd
-from scipy.optimize import curve_fit
-import matplotlib.pyplot as plt
 from typing import Any, Tuple
+
+import matplotlib.pyplot as plt
+import numpy as np
+from scipy.optimize import curve_fit
+
+
+def _to_numpy(data: Any) -> np.ndarray:
+    if hasattr(data, "to_value"):
+        return np.asarray(data.to_value(), dtype=np.float64)
+    if hasattr(data, "value"):
+        return np.asarray(data.value, dtype=np.float64)
+    return np.asarray(data, dtype=np.float64)
 
 
 def lc_to_arrays(lc: Any) -> Tuple[np.ndarray, np.ndarray]:
-    """Convert a lightkurve.LightCurve-like object to (time, flux) numpy arrays.
-
-    This function is lenient: it tries `lc.to_pandas()` first (recommended),
-    then falls back to reading `lc.time`/`lc.flux` attributes.
-    """
-    # Try the convenient to_pandas() path first
+    """Convert a lightkurve.LightCurve-like object to (time, flux) numpy arrays."""
     try:
-        df = lc.to_pandas().reset_index().rename(columns={"index": "time"})
+        time_arr = _to_numpy(lc.time)
+        flux_arr = _to_numpy(lc.flux)
+    except AttributeError as exc:
+        raise ValueError("Provided lightcurve lacks time/flux attributes") from exc
 
-        def _to_float(t):
-            if hasattr(t, "to_value"):
-                return t.to_value()
-            if hasattr(t, "value"):
-                return t.value
-            return float(t)
+    mask = np.isfinite(time_arr) & np.isfinite(flux_arr)
+    if not np.any(mask):
+        raise ValueError("Lightcurve arrays contain no finite samples")
 
-        df["time"] = df["time"].apply(_to_float)
-        df = df.dropna(subset=["time", "flux"])
-        return np.array(df["time"], dtype=float), np.array(df["flux"], dtype=float)
-    except Exception:
-        # Fallback: try attribute-like access
-        time_arr = lc.time.value if hasattr(lc.time, "value") else np.array(lc.time)
-        flux_arr = lc.flux if isinstance(lc.flux, np.ndarray) else np.array(lc.flux)
-        return np.array(time_arr, dtype=float), np.array(flux_arr, dtype=float)
+    return time_arr[mask], flux_arr[mask]
 
 # --- Trapezoidal transit model ---
 def trapezoid_model(t, t0, depth, duration, ingress, baseline):
@@ -81,25 +77,20 @@ def fit_trapezoid_from_arrays(time: np.ndarray, flux: np.ndarray, outdir: Path |
     print(f"Ingress/egress (tau):       {ingress_fit:.6f} days")
     print(f"Baseline flux (out-of-transit): {baseline_fit:.6f}")
 
-    plt.tight_layout()
+    fig, ax = plt.subplots()
+    ax.plot(time, flux, '.k', label='Data')
+    ax.plot(time, trapezoid_model(time, *popt), 'r-', label='Trapezoid fit')
+    ax.set_xlabel('Time [days]')
+    ax.set_ylabel('Flux')
+    ax.legend()
+    ax.set_title('Trapezoidal Transit Fit')
+    fig.tight_layout()
+
     if outdir:
         outdir.mkdir(parents=True, exist_ok=True)
-        plt.plot(time, flux, '.k', label='Data')
-        plt.plot(time, trapezoid_model(time, *popt), 'r-', label='Trapezoid fit')
-        plt.xlabel('Time [days]')
-        plt.ylabel('Flux')
-        plt.legend()
-        plt.title('Trapezoidal Transit Fit')
-        plt.savefig(outdir / "04_fit_trapezoid.png", dpi=150)
-        plt.close()
+        fig.savefig(outdir / "04_fit_trapezoid.png", dpi=150)
+        plt.close(fig)
     else:
-        # --- Plot for visual check ---
-        plt.plot(time, flux, '.k', label='Data')
-        plt.plot(time, trapezoid_model(time, *popt), 'r-', label='Trapezoid fit')
-        plt.xlabel('Time [days]')
-        plt.ylabel('Flux')
-        plt.legend()
-        plt.title('Trapezoidal Transit Fit')
         plt.show()
 
     return popt, pcov
@@ -125,25 +116,31 @@ def read_csv_lightcurve(csv_file: str | Path, time_col: str = 'time', flux_col: 
         Array of flux values
     """
     try:
-        df = pd.read_csv(csv_file)
-        
-        # Check if required columns exist
-        if time_col not in df.columns:
-            raise ValueError(f"Time column '{time_col}' not found in CSV. Available columns: {list(df.columns)}")
-        if flux_col not in df.columns:
-            raise ValueError(f"Flux column '{flux_col}' not found in CSV. Available columns: {list(df.columns)}")
-        
-        # Remove rows with NaN values in time or flux columns
-        df = df.dropna(subset=[time_col, flux_col])
-        
-        time = np.array(df[time_col], dtype=float)
-        flux = np.array(df[flux_col], dtype=float)
-        
-        print(f"Successfully loaded {len(time)} data points from {csv_file}")
-        return time, flux
-        
-    except Exception as e:
-        raise ValueError(f"Error reading CSV file '{csv_file}': {str(e)}")
+        data = np.genfromtxt(csv_file, delimiter=",", names=True, dtype=np.float64)
+    except Exception as exc:
+        raise ValueError(f"Error reading CSV file '{csv_file}': {exc}")
+
+    if isinstance(data, np.ndarray) and data.size == 0:
+        raise ValueError(f"CSV file '{csv_file}' is empty or improperly formatted")
+
+    available_cols = data.dtype.names or []
+    if time_col not in available_cols:
+        raise ValueError(f"Time column '{time_col}' not found in CSV. Available columns: {available_cols}")
+    if flux_col not in available_cols:
+        raise ValueError(f"Flux column '{flux_col}' not found in CSV. Available columns: {available_cols}")
+
+    time = np.atleast_1d(data[time_col])
+    flux = np.atleast_1d(data[flux_col])
+
+    mask = np.isfinite(time) & np.isfinite(flux)
+    if not np.any(mask):
+        raise ValueError(f"No finite values found in CSV columns '{time_col}' and '{flux_col}'")
+
+    time = time[mask]
+    flux = flux[mask]
+
+    print(f"Successfully loaded {len(time)} data points from {csv_file}")
+    return time.astype(float), flux.astype(float)
 
 
 def fit_trapezoid_from_csv(csv_file: str | Path, time_col: str = 'time', flux_col: str = 'flux', outdir: Path | None = None):
